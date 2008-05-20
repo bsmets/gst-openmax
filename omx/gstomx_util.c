@@ -1,8 +1,11 @@
 /*
  * Copyright (C) 2006-2007 Texas Instruments, Incorporated
  * Copyright (C) 2007-2008 Nokia Corporation.
+ * Copyright (C) 2008 NXP. All rights reserved.
  *
  * Author: Felipe Contreras <felipe.contreras@nokia.com>
+ * Contributors:
+ * Frederik vernelen <frederik.vernelen@nxp.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -208,6 +211,7 @@ g_omx_core_new (void)
     core->ports = g_ptr_array_new ();
 
     core->state_sem = g_omx_sem_new ();
+    core->port_state_sem = g_omx_sem_new ();
     core->done_sem = g_omx_sem_new ();
     core->flush_sem = g_omx_sem_new ();
 
@@ -222,6 +226,7 @@ g_omx_core_free (GOmxCore *core)
     g_omx_sem_free (core->flush_sem);
     g_omx_sem_free (core->done_sem);
     g_omx_sem_free (core->state_sem);
+    g_omx_sem_free (core->port_state_sem);    
 
     g_ptr_array_free (core->ports, TRUE);
 
@@ -263,8 +268,6 @@ g_omx_core_deinit (GOmxCore *core)
 void
 g_omx_core_prepare (GOmxCore *core)
 {
-    change_state (core, OMX_StateIdle);
-
     /* Allocate buffers. */
     {
         guint index;
@@ -283,6 +286,12 @@ g_omx_core_prepare (GOmxCore *core)
                     gpointer buffer_data;
                     guint size;
 
+                    if (port->tunneled)
+                    {
+                        port->buffers[i] = NULL;
+                        continue;
+                    }
+
                     size = port->buffer_size;
                     buffer_data = g_malloc (size);
 
@@ -296,17 +305,82 @@ g_omx_core_prepare (GOmxCore *core)
             }
         }
     }
+}
 
-    wait_for_state (core, OMX_StateIdle);
+void
+g_omx_core_release_buffer (GOmxCore *core,
+                           GOmxPort *port)
+{
+    guint i;
+
+    for (i = 0; i < port->num_buffers; i++)
+    {
+        OMX_BUFFERHEADERTYPE *omx_buffer;
+
+        omx_buffer = port->buffers[i];
+
+        if (omx_buffer)
+        {
+            g_free (omx_buffer->pBuffer);
+            omx_buffer->pBuffer = NULL;
+
+            OMX_FreeBuffer (core->omx_handle, port->port_index, omx_buffer);
+            port->buffers[i] = NULL;
+        }
+    }
+}
+
+void
+g_omx_core_setup_tunnel (GOmxCore *core_out,
+                         GOmxCore *core_in)
+{
+    GOmxPort *in_port = NULL;
+    GOmxPort *out_port = NULL;
+    gint index;
+    gint i;
+
+    /* get in port */
+    for (index = 0; index < core_in->ports->len; index++)
+    {
+        GOmxPort *port;
+        port = g_omx_core_get_port (core_in, index);
+        if (port)
+        {
+            if ((port->type == GOMX_PORT_INPUT) && (!port->tunneled))
+            {
+                in_port = port;
+                port->tunneled = TRUE;
+            }
+        }
+    }
+
+    /* get out port */
+    for (index = 0; index < core_out->ports->len; index++)
+    {
+        GOmxPort *port;
+        port = g_omx_core_get_port (core_out, index);
+        if (port)
+        {
+            if ((port->type == GOMX_PORT_OUTPUT) && (!port->tunneled))
+            {
+                out_port = port;
+                port->tunneled = TRUE;
+            }
+        }
+    }
+
+    if (!core_in->imp)
+        return;
+
+    core_in->omx_error = core_in->imp->sym_table.setup_tunnel (core_out->omx_handle,
+                                                               out_port->port_index,
+                                                               core_in->omx_handle,
+                                                               in_port->port_index);
 }
 
 void
 g_omx_core_start (GOmxCore *core)
 {
-    change_state (core, OMX_StateExecuting);
-
-    wait_for_state (core, OMX_StateExecuting);
-
     {
         guint index;
         guint i;
@@ -316,6 +390,9 @@ g_omx_core_start (GOmxCore *core)
             GOmxPort *port;
 
             port = g_omx_core_get_port (core, index);
+
+            if (port->tunneled)
+                continue;
 
             for (i = 0; i < port->num_buffers; i++)
             {
@@ -340,12 +417,6 @@ g_omx_core_pause (GOmxCore *core)
 void
 g_omx_core_finish (GOmxCore *core)
 {
-    change_state (core, OMX_StateIdle);
-
-    wait_for_state (core, OMX_StateIdle);
-
-    change_state (core, OMX_StateLoaded);
-
     {
         guint index;
         guint i;
@@ -362,14 +433,17 @@ g_omx_core_finish (GOmxCore *core)
 
                 omx_buffer = port->buffers[i];
 
-                g_free (omx_buffer->pBuffer);
+                if (omx_buffer)
+                {
+                    g_free (omx_buffer->pBuffer);
+                    omx_buffer->pBuffer = NULL;
 
-                OMX_FreeBuffer (core->omx_handle, index, omx_buffer);
+                    OMX_FreeBuffer (core->omx_handle, index, omx_buffer);
+                    port->buffers[i] = NULL;
+                }
             }
         }
     }
-
-    wait_for_state (core, OMX_StateLoaded);
 
     {
         guint index;
@@ -443,6 +517,9 @@ g_omx_port_new (GOmxCore *core)
     port->num_buffers = 0;
     port->buffer_size = 0;
     port->buffers = NULL;
+    port->tunneled = FALSE;
+    port->linked = FALSE;
+    port->enabled = TRUE;
 
     port->enabled = TRUE;
     port->queue = async_queue_new ();
@@ -482,6 +559,7 @@ g_omx_port_setup (GOmxPort *port,
     port->type = type;
     port->num_buffers = omx_port->nBufferCountMin;
     port->buffer_size = omx_port->nBufferSize;
+    port->port_index = omx_port->nPortIndex;
 
     if (port->buffers)
     {
@@ -701,6 +779,13 @@ EventHandler (OMX_HANDLETYPE omx_handle,
                         break;
                     case OMX_CommandFlush:
                         g_omx_sem_up (core->flush_sem);
+                        g_omx_sem_up (core->port_state_sem); 
+                        break;
+                    case OMX_CommandPortDisable:
+                        g_omx_sem_up (core->port_state_sem); 
+                        break;
+                    case OMX_CommandPortEnable:
+                        g_omx_sem_up (core->port_state_sem); 
                         break;
                     default:
                         break;
@@ -715,6 +800,15 @@ EventHandler (OMX_HANDLETYPE omx_handle,
                     g_omx_port_set_done (core->ports[1]);
                 }
 #endif
+                if (core->event_handler_cb)
+                {
+                    core->event_handler_cb (core,
+                                            eEvent,
+                                            nData1,
+                                            nData2,
+                                            pEventData);
+                }
+
                 break;
             }
         case OMX_EventPortSettingsChanged:

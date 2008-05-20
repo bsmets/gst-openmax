@@ -1,8 +1,11 @@
 /*
  * Copyright (C) 2006-2007 Texas Instruments, Incorporated
  * Copyright (C) 2007-2008 Nokia Corporation.
+ * Copyright (C) 2008 NXP. All rights reserved.
  *
  * Author: Felipe Contreras <felipe.contreras@nokia.com>
+ * Contributors:
+ * Frederik Vernelen <frederik.vernelen@nxp.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -37,9 +40,15 @@ typedef struct GOmxPort GOmxPort;
 typedef struct GOmxSem GOmxSem;
 typedef struct GOmxImp GOmxImp;
 typedef struct GOmxSymbolTable GOmxSymbolTable;
+typedef struct GOmxPadData GOmxPadData;
 typedef enum GOmxPortType GOmxPortType;
 
 typedef void (*GOmxCb) (GOmxCore *core);
+typedef void (*GOmxEventCb) (GOmxCore *core,
+                             OMX_EVENTTYPE eEvent,
+                             OMX_U32 nData1,
+                             OMX_U32 nData2,
+                             OMX_PTR pEventData);
 typedef void (*GOmxPortCb) (GOmxPort *port);
 
 /* Enums. */
@@ -61,6 +70,10 @@ struct GOmxSymbolTable
                                  OMX_PTR data,
                                  OMX_CALLBACKTYPE *callbacks);
     OMX_ERRORTYPE (*free_handle) (OMX_HANDLETYPE handle);
+    OMX_ERRORTYPE (*setup_tunnel)  (OMX_HANDLETYPE hOutput,
+                                    OMX_U32 nPortOutput,
+                                    OMX_HANDLETYPE hInput,
+                                    OMX_U32 nPortInput);
 };
 
 struct GOmxImp
@@ -81,10 +94,12 @@ struct GOmxCore
     gpointer client_data; /**< Placeholder for the client data. */
 
     GOmxSem *state_sem;
+    GOmxSem *port_state_sem;
     GOmxSem *done_sem;
     GOmxSem *flush_sem;
 
     GOmxCb settings_changed_cb;
+    GOmxEventCb event_handler_cb;
     GOmxImp *imp;
 
     gboolean done;
@@ -102,6 +117,9 @@ struct GOmxPort
     GMutex *mutex;
     gboolean enabled;
     AsyncQueue *queue;
+
+    gboolean tunneled;
+    gboolean linked;
 };
 
 struct GOmxSem
@@ -109,6 +127,11 @@ struct GOmxSem
     GCond *condition;
     GMutex *mutex;
     gint counter;
+};
+
+struct GOmxPadData
+{
+    gboolean setting_tunnel;
 };
 
 /* Functions. */
@@ -121,6 +144,8 @@ void g_omx_core_free (GOmxCore *core);
 void g_omx_core_init (GOmxCore *core, const gchar *library_name, const gchar *component_name);
 void g_omx_core_deinit (GOmxCore *core);
 void g_omx_core_prepare (GOmxCore *core);
+void g_omx_core_release_buffer (GOmxCore *core, GOmxPort *port);
+void g_omx_core_setup_tunnel (GOmxCore *core, GOmxCore *peercore);
 void g_omx_core_start (GOmxCore *core);
 void g_omx_core_pause (GOmxCore *core);
 void g_omx_core_finish (GOmxCore *core);
