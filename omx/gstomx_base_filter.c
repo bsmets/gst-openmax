@@ -101,7 +101,7 @@ change_state (GstElement *element,
 
             if (!self->initialized)
             {
-                gst_omx_base_filter_omx_init ((GTypeInstance *)self);
+                gst_omx_base_filter_omx_init (self);
             }
             omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateIdle, NULL);
 
@@ -120,7 +120,7 @@ change_state (GstElement *element,
             omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateExecuting, NULL);
             g_omx_sem_down (gomx->state_sem);
 
-            if (omx_error != OMX_ErrorNone)
+            if (omx_error)
             {
                 return GST_STATE_CHANGE_FAILURE;
             }
@@ -139,9 +139,8 @@ change_state (GstElement *element,
     ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
 
     if (ret == GST_STATE_CHANGE_FAILURE)
-    {
         return ret;
-    }
+
     switch (transition)
     {
         case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
@@ -161,7 +160,7 @@ change_state (GstElement *element,
             }
             omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateIdle, NULL);
             g_omx_sem_down (gomx->state_sem);
-            if (omx_error != OMX_ErrorNone)
+            if (omx_error)
             {
                 return GST_STATE_CHANGE_FAILURE;
             }
@@ -676,22 +675,19 @@ type_instance_init (GTypeInstance *instance,
 }
 
 void
-gst_omx_base_filter_omx_init (GTypeInstance *instance)
+gst_omx_base_filter_omx_init (GstOmxBaseFilter *self)
 {
-    GstOmxBaseFilter *self;
-    self = GST_OMX_BASE_FILTER (instance);
+    GOmxCore *gomx;
 
     GST_LOG_OBJECT (self, "begin");
 
-    GOmxCore *gomx;
     gomx = self->gomx;
 
     g_omx_core_init (self->gomx, self->omx_library, self->omx_component);
 
-    gomx = self->gomx;
-
     GST_INFO_OBJECT (self, "omx: prepare");
 
+    /** @todo this should probably go after doing preparations. */
     if (self->omx_setup)
     {
         self->omx_setup (self);
@@ -699,6 +695,8 @@ gst_omx_base_filter_omx_init (GTypeInstance *instance)
     setup_ports (self);
 
     self->initialized = TRUE;
+
+    GST_LOG_OBJECT (self, "end");
 }
 
 GType

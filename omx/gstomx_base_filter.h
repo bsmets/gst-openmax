@@ -66,7 +66,7 @@ struct GstOmxBaseFilterClass
 
 GType gst_omx_base_filter_get_type (void);
 
-void gst_omx_base_filter_omx_init (GTypeInstance *instance);
+void gst_omx_base_filter_omx_init (GstOmxBaseFilter *self);
 
 G_END_DECLS
 

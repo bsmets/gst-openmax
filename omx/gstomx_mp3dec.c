@@ -177,7 +177,7 @@ type_instance_init (GTypeInstance *instance,
 
     omx_base->gomx->settings_changed_cb = settings_changed_cb;
 
-    gst_omx_base_filter_omx_init (instance);
+    gst_omx_base_filter_omx_init (omx_base);
 }
 
 GType
