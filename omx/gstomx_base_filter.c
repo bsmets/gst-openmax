@@ -27,6 +27,8 @@
 static gboolean share_input_buffer = FALSE;
 static gboolean share_output_buffer = FALSE;
 
+static void output_loop (gpointer data);
+
 enum
 {
     ARG_0,
@@ -86,14 +88,29 @@ change_state (GstElement *element,
             g_omx_core_init (self->gomx, self->omx_library, self->omx_component);
             if (self->gomx->omx_error)
                 return GST_STATE_CHANGE_FAILURE;
+
+            GST_INFO_OBJECT (self, "omx: prepare");
+
+            /** @todo this should probably go after doing preparations. */
+            if (self->omx_setup)
+            {
+                self->omx_setup (self);
+            }
+
+            setup_ports (self);
+
+            g_omx_core_prepare (self->gomx);
+
             break;
 
         case GST_STATE_CHANGE_PAUSED_TO_READY:
-            if (self->initialized)
-            {
-                g_omx_port_finish (self->in_port);
-                g_omx_port_finish (self->out_port);
-            }
+            g_omx_port_finish (self->in_port);
+            g_omx_port_finish (self->out_port);
+            break;
+
+        case GST_STATE_CHANGE_READY_TO_PAUSED:
+            gst_pad_start_task (self->srcpad, output_loop, self->srcpad);
+            g_omx_core_start (self->gomx);
             break;
 
         default:
@@ -111,10 +128,8 @@ change_state (GstElement *element,
             break;
 
         case GST_STATE_CHANGE_PAUSED_TO_READY:
-            if (self->initialized)
-            {
-                g_omx_core_finish (self->gomx);
-            }
+            gst_pad_pause_task (self->srcpad);
+            g_omx_core_finish (self->gomx);
             break;
 
         case GST_STATE_CHANGE_READY_TO_NULL:
@@ -126,7 +141,6 @@ change_state (GstElement *element,
         default:
             break;
     }
-
     GST_LOG_OBJECT (self, "end");
 
     return ret;
@@ -274,12 +288,6 @@ output_loop (gpointer data)
     gomx = self->gomx;
 
     GST_LOG_OBJECT (self, "begin");
-
-    if (!self->initialized)
-    {
-        g_error ("not initialized");
-        return;
-    }
 
     out_port = self->out_port;
 
@@ -477,40 +485,11 @@ pad_chain (GstPad *pad,
 
     GST_LOG_OBJECT (self, "state: %d", gomx->omx_state);
 
-    if (G_UNLIKELY (gomx->omx_state == OMX_StateLoaded))
-    {
-        GST_INFO_OBJECT (self, "omx: prepare");
-
-        /** @todo this should probably go after doing preparations. */
-        if (self->omx_setup)
-        {
-            self->omx_setup (self);
-        }
-
-        setup_ports (self);
-
-        g_omx_core_prepare (self->gomx);
-
-        self->initialized = TRUE;
-        gst_pad_start_task (self->srcpad, output_loop, self->srcpad);
-    }
-
     in_port = self->in_port;
 
     if (G_LIKELY (in_port->enabled))
     {
         guint buffer_offset = 0;
-
-        if (G_UNLIKELY (gomx->omx_state == OMX_StateIdle))
-        {
-            GST_INFO_OBJECT (self, "omx: play");
-            g_omx_core_start (gomx);
-        }
-
-        if (G_UNLIKELY (gomx->omx_state != OMX_StateExecuting))
-        {
-            GST_ERROR_OBJECT (self, "Whoa! very wrong");
-        }
 
         while (G_LIKELY (buffer_offset < GST_BUFFER_SIZE (buf)))
         {
@@ -704,29 +683,23 @@ activate_push (GstPad *pad,
         /* we do not start the task yet if the pad is not connected */
         if (gst_pad_is_linked (pad))
         {
-            if (self->initialized)
-            {
-                /** @todo link callback function also needed */
-                g_omx_port_enable (self->in_port);
-                g_omx_port_enable (self->out_port);
+            /** @todo link callback function also needed */
+            g_omx_port_enable (self->in_port);
+            g_omx_port_enable (self->out_port);
 
-                result = gst_pad_start_task (pad, output_loop, pad);
-            }
+            result = gst_pad_start_task (pad, output_loop, pad);
         }
     }
     else
     {
         GST_DEBUG_OBJECT (self, "deactivate");
 
-        if (self->initialized)
-        {
-            /* flush all buffers */
-            OMX_SendCommand (self->gomx->omx_handle, OMX_CommandFlush, OMX_ALL, NULL);
+        /* flush all buffers */
+        OMX_SendCommand (self->gomx->omx_handle, OMX_CommandFlush, OMX_ALL, NULL);
 
-            /* unlock loops */
-            g_omx_port_disable (self->in_port);
-            g_omx_port_disable (self->out_port);
-        }
+        /* unlock loops */
+        g_omx_port_disable (self->in_port);
+        g_omx_port_disable (self->out_port);
 
         /* make sure streaming finishes */
         result = gst_pad_stop_task (pad);
