@@ -25,6 +25,8 @@
 static gboolean share_input_buffer = FALSE;
 static gboolean share_output_buffer = FALSE;
 
+static gpointer output_thread (gpointer cb_data);
+
 enum
 {
     ARG_0,
@@ -75,10 +77,17 @@ static GstStateChangeReturn
 change_state (GstElement *element,
               GstStateChange transition)
 {
+    OMX_ERRORTYPE omx_error = OMX_ErrorNone;
     GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
     GstOmxBaseFilter *self;
+    GOmxCore *gomx;
+    GOmxPort *in_port;
+    GOmxPort *out_port;
 
     self = GST_OMX_BASE_FILTER (element);
+    gomx = self->gomx;
+    out_port = self->out_port;
+    in_port = self->in_port;
 
     GST_LOG_OBJECT (self, "begin");
 
@@ -89,22 +98,40 @@ change_state (GstElement *element,
     switch (transition)
     {
         case GST_STATE_CHANGE_NULL_TO_READY:
-            g_omx_core_init (self->gomx, self->omx_library, self->omx_component);
-            if (self->gomx->omx_error)
-                return GST_STATE_CHANGE_FAILURE;
-            break;
 
-        case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
-            break;
-
-        case GST_STATE_CHANGE_PAUSED_TO_READY:
-            if (self->initialized)
+            if (self->initialized == FALSE)
             {
-                g_omx_port_set_done (self->in_port);
-                g_omx_port_set_done (self->out_port);
+                gst_omx_base_filter_omx_init((GTypeInstance *)self);
+            }
+            omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateIdle, NULL);
+
+            g_omx_core_prepare (self->gomx);
+
+            g_omx_sem_down (gomx->state_sem);
+
+            if (omx_error)
+            {
+                return GST_STATE_CHANGE_FAILURE;
             }
             break;
 
+        case GST_STATE_CHANGE_READY_TO_PAUSED:
+
+            omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateExecuting, NULL);
+            g_omx_sem_down (gomx->state_sem);
+
+            if(omx_error != OMX_ErrorNone)
+            {
+                return GST_STATE_CHANGE_FAILURE;
+            }
+
+            if(!(self->thread))
+            {
+                self->thread = g_thread_create (output_thread, gomx, TRUE, NULL);
+            }
+            g_omx_core_start (gomx);
+            break;
+        case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
         default:
             break;
     }
@@ -112,8 +139,9 @@ change_state (GstElement *element,
     ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
 
     if (ret == GST_STATE_CHANGE_FAILURE)
+    {
         return ret;
-
+    }
     switch (transition)
     {
         case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
@@ -122,21 +150,39 @@ change_state (GstElement *element,
         case GST_STATE_CHANGE_PAUSED_TO_READY:
             if (self->initialized)
             {
-                g_thread_join (self->thread);
-                g_omx_core_finish (self->gomx);
+                g_omx_port_set_done (self->in_port);
+                g_omx_port_set_done (self->out_port);
+
+                if(self->thread)
+                {
+                    g_omx_port_push_buffer (self->out_port, NULL);
+                    g_thread_join (self->thread);
+                }
+            }
+            omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateIdle, NULL);
+            g_omx_sem_down (gomx->state_sem);
+            if(omx_error != OMX_ErrorNone)
+            {
+                return GST_STATE_CHANGE_FAILURE;
             }
             break;
 
         case GST_STATE_CHANGE_READY_TO_NULL:
-            g_omx_core_deinit (self->gomx);
-            if (self->gomx->omx_error)
+            omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateLoaded, NULL);
+            g_omx_core_finish(gomx);
+
+            g_omx_sem_down (gomx->state_sem);
+            if (omx_error)
+            {
                 return GST_STATE_CHANGE_FAILURE;
+            }
+            g_omx_core_deinit (self->gomx);
+            self->initialized = FALSE;
             break;
 
         default:
             break;
     }
-
     GST_LOG_OBJECT (self, "end");
 
     return ret;
@@ -458,35 +504,11 @@ pad_chain (GstPad *pad,
 
     GST_LOG_OBJECT (self, "state: %d", gomx->omx_state);
 
-    if (G_UNLIKELY (gomx->omx_state == OMX_StateLoaded))
-    {
-        GST_INFO_OBJECT (self, "omx: prepare");
-
-        /** @todo this should probably go after doing preparations. */
-        if (self->omx_setup)
-        {
-            self->omx_setup (self);
-        }
-
-        setup_ports (self);
-        g_omx_core_prepare (self->gomx);
-
-        self->thread = g_thread_create (output_thread, gomx, TRUE, NULL);
-
-        self->initialized = TRUE;
-    }
-
     in_port = self->in_port;
 
     if (G_LIKELY (!in_port->done))
     {
         guint buffer_offset = 0;
-
-        if (G_UNLIKELY (gomx->omx_state == OMX_StateIdle))
-        {
-            GST_INFO_OBJECT (self, "omx: play");
-            g_omx_core_start (gomx);
-        }
 
         if (G_UNLIKELY (gomx->omx_state != OMX_StateExecuting))
         {
@@ -651,6 +673,32 @@ type_instance_init (GTypeInstance *instance,
     self->omx_library = g_strdup (DEFAULT_LIBRARY_NAME);
 
     GST_LOG_OBJECT (self, "end");
+}
+
+void
+gst_omx_base_filter_omx_init (GTypeInstance *instance)
+{
+    GstOmxBaseFilter *self;
+    self = GST_OMX_BASE_FILTER (instance);
+
+    GST_LOG_OBJECT (self, "begin");
+
+    GOmxCore *gomx;
+    gomx = self->gomx;
+
+    g_omx_core_init (self->gomx, self->omx_library, self->omx_component);
+
+    gomx = self->gomx;
+
+    GST_INFO_OBJECT (self, "omx: prepare");
+
+    if (self->omx_setup)
+    {
+        self->omx_setup (self);
+    }
+    setup_ports (self);
+
+    self->initialized = TRUE;
 }
 
 GType
