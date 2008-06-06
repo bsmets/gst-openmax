@@ -99,9 +99,9 @@ change_state (GstElement *element,
     {
         case GST_STATE_CHANGE_NULL_TO_READY:
 
-            if (self->initialized == FALSE)
+            if (!self->initialized)
             {
-                gst_omx_base_filter_omx_init((GTypeInstance *)self);
+                gst_omx_base_filter_omx_init ((GTypeInstance *)self);
             }
             omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateIdle, NULL);
 
@@ -120,12 +120,12 @@ change_state (GstElement *element,
             omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateExecuting, NULL);
             g_omx_sem_down (gomx->state_sem);
 
-            if(omx_error != OMX_ErrorNone)
+            if (omx_error != OMX_ErrorNone)
             {
                 return GST_STATE_CHANGE_FAILURE;
             }
 
-            if(!(self->thread))
+            if (!self->thread)
             {
                 self->thread = g_thread_create (output_thread, gomx, TRUE, NULL);
             }
@@ -153,7 +153,7 @@ change_state (GstElement *element,
                 g_omx_port_set_done (self->in_port);
                 g_omx_port_set_done (self->out_port);
 
-                if(self->thread)
+                if (self->thread)
                 {
                     g_omx_port_push_buffer (self->out_port, NULL);
                     g_thread_join (self->thread);
@@ -161,7 +161,7 @@ change_state (GstElement *element,
             }
             omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateIdle, NULL);
             g_omx_sem_down (gomx->state_sem);
-            if(omx_error != OMX_ErrorNone)
+            if (omx_error != OMX_ErrorNone)
             {
                 return GST_STATE_CHANGE_FAILURE;
             }
@@ -169,7 +169,7 @@ change_state (GstElement *element,
 
         case GST_STATE_CHANGE_READY_TO_NULL:
             omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateLoaded, NULL);
-            g_omx_core_finish(gomx);
+            g_omx_core_finish (gomx);
 
             g_omx_sem_down (gomx->state_sem);
             if (omx_error)
