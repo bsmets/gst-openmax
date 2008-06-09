@@ -34,16 +34,16 @@ G_BEGIN_DECLS
 typedef struct GstOmxAudioSink GstOmxAudioSink;
 typedef struct GstOmxAudioSinkClass GstOmxAudioSinkClass;
 
-#include "gstomx_base_sink.h"
+#include "gstomx_base_audio_sink.h"
 
 struct GstOmxAudioSink
 {
-    GstOmxBaseSink omx_base;
+    GstOmxBaseAudioSink omx_base;
 };
 
 struct GstOmxAudioSinkClass
 {
-    GstOmxBaseSinkClass parent_class;
+    GstOmxBaseAudioSinkClass parent_class;
 };
 
 GType gst_omx_audiosink_get_type (void);

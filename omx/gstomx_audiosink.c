@@ -24,7 +24,7 @@
 
 #define OMX_COMPONENT_NAME "OMX.st.alsa.alsasink"
 
-static GstOmxBaseSinkClass *parent_class = NULL;
+static GstOmxBaseAudioSinkClass *parent_class = NULL;
 
 static GstCaps *
 generate_sink_template ()
@@ -47,9 +47,9 @@ static void
 type_base_init (gpointer g_class)
 {
     GstElementClass *element_class;
-    GstOmxBaseSinkClass *omx_base_class;
+    GstOmxBaseAudioSinkClass *omx_base_class;
 
-    omx_base_class = GST_OMX_BASE_SINK_CLASS (g_class);
+    omx_base_class = GST_OMX_BASE_AUDIO_SINK_CLASS (g_class);
     element_class = GST_ELEMENT_CLASS (g_class);
 
     {
@@ -75,13 +75,13 @@ type_base_init (gpointer g_class)
 }
 
 static gboolean
-setcaps (GstBaseSink *gst_sink,
+setcaps (GstOmxBaseAudioSink *gst_sink,
          GstCaps *caps)
 {
-    GstOmxBaseSink *self;
+    GstOmxBaseAudioSink *self;
     GOmxCore *gomx;
 
-    self = GST_OMX_BASE_SINK (gst_sink);
+    self = GST_OMX_BASE_AUDIO_SINK (gst_sink);
     gomx = (GOmxCore *) self->gomx;
 
     GST_INFO_OBJECT (self, "setcaps (sink): %" GST_PTR_FORMAT, caps);
@@ -136,25 +136,28 @@ static void
 type_class_init (gpointer g_class,
                  gpointer class_data)
 {
-    GstBaseSinkClass *gst_base_sink_class;
+    GstElementClass *element_class;
 
-    parent_class = g_type_class_ref (GST_OMX_BASE_SINK_TYPE);
-    gst_base_sink_class = GST_BASE_SINK_CLASS (g_class);
+    element_class = GST_ELEMENT_CLASS (g_class);
 
-    gst_base_sink_class->set_caps = setcaps;
+    //element_class->set_caps = setcaps;
+
+    parent_class = g_type_class_ref (GST_OMX_BASE_AUDIO_SINK_TYPE);
 }
 
 static void
 type_instance_init (GTypeInstance *instance,
                     gpointer g_class)
 {
-    GstOmxBaseSink *omx_base;
+    GstOmxBaseAudioSink *omx_base;
 
-    omx_base = GST_OMX_BASE_SINK (instance);
+    omx_base = GST_OMX_BASE_AUDIO_SINK (instance);
 
     GST_DEBUG_OBJECT (omx_base, "start");
 
     omx_base->omx_component = g_strdup (OMX_COMPONENT_NAME);
+
+    gst_omx_base_audio_sink_omx_init (instance);
 }
 
 GType
@@ -173,7 +176,7 @@ gst_omx_audiosink_get_type (void)
         type_info->instance_size = sizeof (GstOmxAudioSink);
         type_info->instance_init = type_instance_init;
 
-        type = g_type_register_static (GST_OMX_BASE_SINK_TYPE, "GstOmxAudioSink", type_info, 0);
+        type = g_type_register_static (GST_OMX_BASE_AUDIO_SINK_TYPE, "GstOmxAudioSink", type_info, 0);
 
         g_free (type_info);
     }

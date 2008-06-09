@@ -3,6 +3,7 @@ plugin_LTLIBRARIES = libgstomx.la
 libgstomx_la_SOURCES = gstomx.c gstomx.h \
 		       gstomx_base_filter.c gstomx_base_filter.h \
 		       gstomx_base_sink.c gstomx_base_sink.h \
+		       gstomx_base_audio_sink.c gstomx_base_audio_sink.h \
 		       gstomx_base_src.c gstomx_base_src.h \
 		       gstomx_base_videodec.c gstomx_base_videodec.h \
 		       gstomx_base_videoenc.c gstomx_base_videoenc.h \
