@@ -236,6 +236,12 @@ set_property (GObject *obj,
         case ARG_USE_TIMESTAMPS:
             self->use_timestamps = g_value_get_boolean (value);
             break;
+        case ARG_ALLOW_OMX_TUNNEL:
+            self->allow_omx_tunnel = g_value_get_boolean (value);
+            break;
+        case ARG_GOMX_CORE:
+            gomx = g_value_get_pointer (value);
+            break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, prop_id, pspec);
             break;
@@ -264,6 +270,12 @@ get_property (GObject *obj,
             break;
         case ARG_USE_TIMESTAMPS:
             g_value_set_boolean (value, self->use_timestamps);
+            break;
+        case ARG_ALLOW_OMX_TUNNEL:
+            g_value_set_boolean (value, self->allow_omx_tunnel);
+            break;
+        case ARG_GOMX_CORE:
+            g_value_set_pointer (value, gomx);
             break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, prop_id, pspec);

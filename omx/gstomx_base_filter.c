@@ -32,7 +32,9 @@ enum
     ARG_0,
     ARG_COMPONENT_NAME,
     ARG_LIBRARY_NAME,
-    ARG_USE_TIMESTAMPS
+    ARG_USE_TIMESTAMPS,
+    ARG_ALLOW_OMX_TUNNEL,
+    ARG_GOMX_CORE
 };
 
 static GstElementClass *parent_class = NULL;
@@ -209,8 +211,10 @@ set_property (GObject *obj,
               GParamSpec *pspec)
 {
     GstOmxBaseFilter *self;
+    GOmxCore *gomx;
 
     self = GST_OMX_BASE_FILTER (obj);
+    gomx = self->gomx;
 
     switch (prop_id)
     {
@@ -231,6 +235,12 @@ set_property (GObject *obj,
         case ARG_USE_TIMESTAMPS:
             self->use_timestamps = g_value_get_boolean (value);
             break;
+        case ARG_ALLOW_OMX_TUNNEL:
+            self->allow_omx_tunnel = g_value_get_boolean (value);
+            break;
+        case ARG_GOMX_CORE:
+            gomx = g_value_get_pointer (value);
+            break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, prop_id, pspec);
             break;
@@ -244,8 +254,10 @@ get_property (GObject *obj,
               GParamSpec *pspec)
 {
     GstOmxBaseFilter *self;
+    GOmxCore *gomx;
 
     self = GST_OMX_BASE_FILTER (obj);
+    gomx = self->gomx;
 
     switch (prop_id)
     {
@@ -257,6 +269,12 @@ get_property (GObject *obj,
             break;
         case ARG_USE_TIMESTAMPS:
             g_value_set_boolean (value, self->use_timestamps);
+            break;
+        case ARG_ALLOW_OMX_TUNNEL:
+            g_value_set_boolean (value, self->allow_omx_tunnel);
+            break;
+        case ARG_GOMX_CORE:
+            g_value_set_pointer (value, gomx);
             break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, prop_id, pspec);
@@ -298,6 +316,17 @@ type_class_init (gpointer g_class,
                                          g_param_spec_boolean ("use-timestamps", "Use timestamps",
                                                                "Whether or not to use timestamps",
                                                                TRUE, G_PARAM_READWRITE));
+
+        g_object_class_install_property (gobject_class, ARG_ALLOW_OMX_TUNNEL,
+                                         g_param_spec_boolean ("Allow-omx-tunnel", "Allow OMX Tunnel",
+                                                 "Allow setting up an omx tunnel between this component and another component",
+                                                         TRUE,
+                                                                 G_PARAM_READWRITE));
+
+        g_object_class_install_property (gobject_class, ARG_GOMX_CORE,
+                                         g_param_spec_pointer ("GOMX-Core-Pointer", "GOMX Core Pointer",
+                                                 "Pointer to the GOMX struct of this gstomx element",
+                                                         G_PARAM_READWRITE));
     }
 }
 
