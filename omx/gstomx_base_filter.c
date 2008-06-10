@@ -1,7 +1,9 @@
 /*
  * Copyright (C) 2007-2008 Nokia Corporation.
+ * Copyright (C) 2008 NXP.
  *
  * Author: Felipe Contreras <felipe.contreras@nokia.com>
+ * Contributor: Frederik Vernelen <frederik.vernelen@nxp.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -28,6 +30,10 @@ static gboolean share_input_buffer = FALSE;
 static gboolean share_output_buffer = FALSE;
 
 static void output_loop (gpointer data);
+
+static gboolean send_disable_event (GstOmxBaseFilter *self, GstPad *pad);
+static gboolean send_enable_event (GstOmxBaseFilter *self, GstPad *pad);
+static GstPad* find_real_peer (GstPad *pad, GstPad *peer);
 
 enum
 {
@@ -67,6 +73,52 @@ setup_ports (GstOmxBaseFilter *self)
     self->out_port = g_omx_core_setup_port (core, param);
 
     free (param);
+}
+
+static void
+enable_tunneled_port (GstOmxBaseFilter *self, GOmxPort *port, GstPad *pad)
+{
+    GOmxCore *gomx;
+    gomx = self->gomx;
+    OMX_ERRORTYPE omx_error;
+
+    if((port->tunneled) && (!(port->enabled)))
+    {
+        omx_error = OMX_SendCommand( gomx->omx_handle, OMX_CommandPortEnable, port->port_index, NULL);
+        send_enable_event (self,pad);
+        port->enabled = TRUE;
+        g_omx_sem_down (gomx->port_state_sem);
+    }
+}
+
+static void
+disable_tunneled_port (GstOmxBaseFilter *self, GOmxPort *port, GstPad *pad)
+{
+    GOmxCore *gomx;
+    gomx = self->gomx;
+    OMX_ERRORTYPE omx_error;
+
+    if((port->tunneled) && (port->enabled))
+    {
+        omx_error = OMX_SendCommand( gomx->omx_handle, OMX_CommandPortDisable, port->port_index, NULL);
+        send_disable_event (self,pad);
+        port->enabled = FALSE;
+        g_omx_sem_down (gomx->port_state_sem);
+    }
+}
+
+static void
+disable_tunneled_ports (GstOmxBaseFilter *self)
+{
+    disable_tunneled_port (self,self->in_port,self->sinkpad);
+    disable_tunneled_port (self,self->out_port,self->srcpad);
+}
+
+static void
+enable_tunneled_ports (GstOmxBaseFilter *self)
+{
+    enable_tunneled_port (self,self->in_port,self->sinkpad);
+    enable_tunneled_port (self,self->out_port,self->srcpad);
 }
 
 static GstStateChangeReturn
@@ -488,6 +540,69 @@ leave:
     gst_object_unref (self);
 }
 
+static GstPad* 
+find_peer_of_proxypad(GstPad *peer)
+{
+    GstPad* ghostpad;
+    GstPad* peerofghostpad;
+    GstPad* targetpad;
+
+    ghostpad = (GstPad*)gst_pad_get_parent(peer);
+    peerofghostpad = gst_pad_get_peer (ghostpad);
+    gst_object_unref(ghostpad);
+
+    if(GST_IS_GHOST_PAD (peerofghostpad))
+    {
+        targetpad = gst_ghost_pad_get_target ((GstGhostPad *) peerofghostpad);
+        gst_object_unref(peerofghostpad);
+    }
+    else if (peerofghostpad == NULL)
+    {
+        targetpad = peerofghostpad;
+    }
+    else
+    {
+        targetpad = peerofghostpad;
+    }
+    return targetpad;
+}
+
+static GstPad* 
+find_real_peer (GstPad *pad,
+                               GstPad *peer)
+{
+    GstPad* real_peerpad;
+    GstElement* gpeerelement;
+    GstElement* gthiselement;
+
+    gpeerelement = gst_pad_get_parent_element(peer);
+    gthiselement = gst_pad_get_parent_element(pad);
+
+    if(GST_IS_GHOST_PAD (peer))
+    {
+        real_peerpad = gst_ghost_pad_get_target ((GstGhostPad *) peer);
+        if( (real_peerpad == NULL)||(real_peerpad == pad) )
+        {
+            return NULL;
+        }
+    }
+    else if(gpeerelement == NULL)
+    {
+        //we assume that if the peer has no parent, the peer is a proxy pad
+        real_peerpad = find_peer_of_proxypad(peer);
+        if(real_peerpad == NULL)
+        {
+            return NULL;
+        }
+    }
+    else
+    {
+        real_peerpad = peer;
+        gst_object_ref(real_peerpad);
+    }
+    return real_peerpad;
+}
+
 static GstFlowReturn
 pad_chain (GstPad *pad,
            GstBuffer *buf)
@@ -604,14 +719,85 @@ out_flushing:
     }
 }
 
+
+static gboolean
+send_disable_event (GstOmxBaseFilter *self,GstPad *pad)
+{
+    gboolean ret = FALSE;
+    GstStructure *structure;
+    GstEvent *event;
+    GstPad *peerpad;
+
+    if(pad == self->sinkpad)
+    {
+        structure = gst_structure_empty_new  ("DisableOutPort");
+        event = gst_event_new_custom (GST_EVENT_CUSTOM_UPSTREAM, structure);
+    }
+    else if (pad == self->srcpad)
+    {
+        structure = gst_structure_empty_new  ("DisableInPort");
+        event = gst_event_new_custom (GST_EVENT_CUSTOM_DOWNSTREAM_OOB, structure);
+    }
+    else
+    {
+        return FALSE;
+    }
+
+    g_print("event->structure name = %s\n",gst_structure_get_name(event->structure) );
+    g_print("sending gst_pad_push_event 1\n");
+    peerpad = find_real_peer (pad, pad->peer);
+    if(peerpad != NULL)
+    {
+      //event are not handled by peer when it is in READY state, so we call its eventhandler directly
+      //ret = gst_pad_push_event (peerpad, event);
+        peerpad->eventfunc(peerpad,event );
+        gst_object_unref(peerpad);
+        ret = TRUE;
+    }
+    return ret;
+}
+
+static gboolean
+send_enable_event (GstOmxBaseFilter *self,GstPad *pad)
+{
+    gboolean ret;
+    GstStructure *structure;
+    GstEvent *event;
+
+    if(pad == self->sinkpad)
+    {
+        structure = gst_structure_empty_new  ("EnableOutPort");
+        event = gst_event_new_custom (GST_EVENT_CUSTOM_UPSTREAM, structure);
+    }
+    else if (pad == self->srcpad)
+    {
+        structure = gst_structure_empty_new  ("EnableInPort");
+        event = gst_event_new_custom (GST_EVENT_CUSTOM_DOWNSTREAM_OOB, structure);
+    }
+    else
+    {
+        return FALSE;
+    }
+
+    ret = gst_pad_push_event (pad, event);
+    return ret;
+}
+
 static gboolean
 pad_event (GstPad *pad,
            GstEvent *event)
 {
     GstOmxBaseFilter *self;
+    GOmxCore *gomx;
     gboolean ret;
+    GOmxPort *in_port;
+    GOmxPort *out_port;
+    OMX_ERRORTYPE retval;
 
     self = GST_OMX_BASE_FILTER (GST_OBJECT_PARENT (pad));
+    gomx = self->gomx;
+    in_port = self->in_port;
+    out_port = self->out_port;
 
     GST_LOG_OBJECT (self, "begin");
 
@@ -675,6 +861,56 @@ pad_event (GstPad *pad,
 
         case GST_EVENT_NEWSEGMENT:
             ret = gst_pad_push_event (self->srcpad, event);
+            break;
+
+        case GST_EVENT_CUSTOM_DOWNSTREAM_OOB:
+            if (strcmp(gst_structure_get_name (event->structure),"DisableInPort") == 0)
+            {
+                OMX_SendCommand( gomx->omx_handle, OMX_CommandFlush, out_port->port_index, NULL);
+                g_omx_sem_down (gomx->port_state_sem);
+
+                disable_tunneled_port(self,out_port,self->srcpad);
+
+                OMX_SendCommand( gomx->omx_handle, OMX_CommandPortDisable, in_port->port_index, NULL);
+                in_port->enabled = FALSE;
+                g_omx_sem_down (gomx->port_state_sem);
+            }
+            else if (strcmp(gst_structure_get_name (event->structure),"EnableInPort") == 0)
+            {
+                enable_tunneled_port(self,out_port,self->srcpad);
+
+                OMX_SendCommand( gomx->omx_handle, OMX_CommandPortEnable, in_port->port_index, NULL);
+                in_port->enabled = TRUE;
+                g_omx_sem_down (gomx->port_state_sem);
+            }
+            break;
+
+        case GST_EVENT_CUSTOM_UPSTREAM:
+            if (strcmp(gst_structure_get_name (event->structure),"DisableOutPort") == 0)
+            {
+                if(gomx->omx_state != OMX_StateExecuting)
+                {
+                    retval = OMX_SendCommand( gomx->omx_handle, OMX_CommandFlush, out_port->port_index, NULL);
+                    if(retval != OMX_ErrorNone)
+                    {
+                        return TRUE; 
+                    }
+                    g_omx_sem_down (gomx->port_state_sem);
+                }
+                disable_tunneled_port(self,in_port,self->sinkpad);
+
+                OMX_SendCommand( gomx->omx_handle, OMX_CommandPortDisable, out_port->port_index, NULL);
+                out_port->enabled = FALSE;
+                g_omx_sem_down (gomx->port_state_sem);
+            }
+            else if (strcmp(gst_structure_get_name (event->structure),"EnableOutPort") == 0)
+            {
+                enable_tunneled_port(self,in_port,self->sinkpad);
+
+                OMX_SendCommand( gomx->omx_handle, OMX_CommandPortEnable, out_port->port_index, NULL);
+                out_port->enabled = TRUE;
+                g_omx_sem_down (gomx->port_state_sem);
+            }
             break;
 
         default:
