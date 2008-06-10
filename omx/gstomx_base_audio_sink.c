@@ -361,6 +361,17 @@ type_class_init (gpointer g_class,
                                                                "Whether or not to use timestamps",
                                                                TRUE, G_PARAM_READWRITE));
 
+        g_object_class_install_property (gobject_class, ARG_ALLOW_OMX_TUNNEL,
+                                         g_param_spec_boolean ("Allow-omx-tunnel", "Allow OMX Tunnel",
+                                                               "Allow setting up an omx tunnel between this component and another component",
+                                                               TRUE,
+                                                               G_PARAM_READWRITE));
+
+        g_object_class_install_property (gobject_class, ARG_GOMX_CORE,
+                                         g_param_spec_pointer ("GOMX-Core-Pointer", "GOMX Core Pointer",
+                                                               "Pointer to the GOMX struct of this gstomx element",
+                                                               G_PARAM_READWRITE));
+
     }
 }
 
@@ -559,12 +570,19 @@ pad_chain (GstPad *pad,
 
     gomx = self->gomx;
 
+    printf("N");
     GST_LOG_OBJECT (self, "begin");
     GST_LOG_OBJECT (self, "gst_buffer: size=%lu", GST_BUFFER_SIZE (buf));
 
     GST_LOG_OBJECT (self, "state: %d", gomx->omx_state);
 
     in_port = self->in_port;
+
+    if (G_UNLIKELY(in_port->tunneled))
+    {
+        g_print("in_port->tunneled\n");
+        return GST_FLOW_OK;
+    }
 
     if (G_LIKELY (!in_port->done))
     {
@@ -811,7 +829,9 @@ type_instance_init (GTypeInstance *instance,
 
     gst_pad_set_chain_function (self->sinkpad, pad_chain);
     gst_pad_set_event_function (self->sinkpad, pad_event);
-
+    //note that when linking against ghost-pads, the link function of the ghost pad should call this link function when the ghost pad gets linked to another ghost- or proxypad.
+    gst_pad_set_link_function (self->sinkpad, pad_sink_link);
+    gst_pad_set_unlink_function (self->sinkpad, pad_unlink);
     gst_pad_set_element_private (self->sinkpad, &(self->sinkpad_data));
 
     gst_element_add_pad (GST_ELEMENT (self), self->sinkpad);
