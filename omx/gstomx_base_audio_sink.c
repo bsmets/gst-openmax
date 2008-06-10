@@ -143,8 +143,9 @@ change_state (GstElement *element,
                 return GST_STATE_CHANGE_FAILURE;
             }
             break;
-        case GST_STATE_CHANGE_READY_TO_PAUSED:;
+        case GST_STATE_CHANGE_READY_TO_PAUSED:
 
+            enable_tunneled_ports(self);
             omx_error = OMX_SendCommand(gomx->omx_handle, OMX_CommandStateSet,OMX_StatePause, NULL);
             g_omx_sem_down (gomx->state_sem);
             if (omx_error != OMX_ErrorNone)
@@ -202,6 +203,7 @@ change_state (GstElement *element,
 
         case GST_STATE_CHANGE_READY_TO_NULL:
 
+            disable_tunneled_ports(self);
             omx_error = OMX_SendCommand( gomx->omx_handle, OMX_CommandFlush, in_port->port_index, NULL);
             g_omx_sem_down (gomx->port_state_sem);
             if (omx_error != OMX_ErrorNone)
@@ -416,6 +418,132 @@ find_real_peer (GstPad *pad,
         gst_object_ref(real_peerpad);
     }
     return real_peerpad;
+}
+
+static GstPadLinkReturn
+pad_sink_link  (GstPad *pad,
+                GstPad *peer)
+{
+    bool isOMX = FALSE;
+    GOmxCore *gomx;
+    GOmxPort *in_port;
+    GstOmxBaseAudioSink *self;
+    GObject *gpeerobject;
+    GstElement* gpeerelement;
+    GValue value = { 0, };
+    GstPad *peerpad;
+    GstGhostPad *ghostpad;
+
+    self = GST_OMX_BASE_AUDIO_SINK (GST_OBJECT_PARENT (pad));
+    if(!self->initialized )
+    {
+        return GST_PAD_LINK_REFUSED;
+    }
+    gomx = self->gomx;
+    in_port = self->in_port;
+
+    if(in_port->tunneled == TRUE)
+    {
+        return GST_PAD_LINK_OK;//nothing to do , tunnel already linked
+    }
+
+    peerpad = find_real_peer(pad,peer);
+    if(peerpad == NULL)
+    {
+        gst_object_unref(peerpad);
+        return GST_PAD_LINK_OK;
+    }
+
+    gpeerelement = gst_pad_get_parent_element(peerpad);
+
+    in_port->linked = TRUE;
+
+    gpeerobject = G_OBJECT (gpeerelement);
+    GObjectClass *g_object_class = G_OBJECT_GET_CLASS(gpeerobject);
+    GParamSpec *spec;
+    spec = g_object_class_find_property(g_object_class, "Allow-omx-tunnel");
+    if(spec != NULL)
+    {
+        if(spec->value_type == G_TYPE_BOOLEAN)
+        {
+            GValue tunnelAllowed = { 0, };
+            g_value_init (&tunnelAllowed, G_TYPE_BOOLEAN);
+            g_object_get_property (G_OBJECT (gpeerelement), "Allow-omx-tunnel", &tunnelAllowed);
+
+            spec = g_object_class_find_property(g_object_class, "GOMX-Core-Pointer");
+
+            if( (spec != NULL) && (g_value_get_boolean (&tunnelAllowed) == TRUE) && (self->allow_omx_tunnel == TRUE) )
+            {
+                if(spec->value_type == G_TYPE_POINTER)
+                {
+                    GOmxCore *gpeeromx;
+                    GOmxPadData *paddata;
+                    g_value_init (&value, G_TYPE_POINTER);
+                    OMX_ERRORTYPE retval;
+                    g_object_get_property (G_OBJECT (gpeerelement), "GOMX-Core-Pointer", &value);
+
+                    gpeeromx = g_value_get_pointer (&value);
+
+                    //in_port might already be prepared for non-tunneled communication
+                    g_omx_core_release_buffer(gomx,in_port);
+
+                    retval = OMX_SendCommand( gomx->omx_handle, OMX_CommandPortDisable, in_port->port_index, NULL);
+                    if(retval != OMX_ErrorNone)
+                    {
+                        gst_object_unref(gpeerelement);
+                        gst_object_unref(peerpad);
+                        return GST_PAD_LINK_REFUSED; 
+                    }
+
+                    in_port->enabled = FALSE;
+                    g_omx_sem_down (gomx->port_state_sem);
+
+                    (self->sinkpad_data).setting_tunnel = TRUE;
+                    //check if the other OMX component invoked us, or if we need to invoke him
+                    paddata = (GOmxPadData*)gst_pad_get_element_private (peerpad);
+
+                    if(paddata->setting_tunnel == TRUE)
+                    {
+                        if(!(in_port->tunneled))
+                        {
+                            g_omx_core_setup_tunnel(gpeeromx, gomx);
+                        }
+                    }
+                    else if(peerpad->linkfunc != NULL)
+                    {
+                        peerpad->linkfunc(peerpad,pad);
+                    }
+                    (self->sinkpad_data).setting_tunnel = FALSE;
+
+                    if( (gomx->omx_state == OMX_StateExecuting) || (gomx->omx_state == OMX_StatePause) )
+                    {
+                        enable_tunneled_ports(self);
+                    }
+                }
+            }
+        }
+    }
+    gst_object_unref(gpeerelement);
+    gst_object_unref(peerpad);
+
+    return GST_PAD_LINK_OK;
+}
+
+static void
+pad_unlink  (GstPad *pad)
+{
+    GstOmxBaseAudioSink *self;
+    GOmxPort *in_port;
+
+    self = GST_OMX_BASE_AUDIO_SINK (GST_OBJECT_PARENT (pad));
+
+    in_port = self->in_port;
+    if(!self->initialized )
+    {
+        return;
+    }
+    in_port->tunneled = FALSE;
+    in_port->linked = FALSE;
 }
 
 static GstFlowReturn
