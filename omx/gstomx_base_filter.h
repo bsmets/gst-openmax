@@ -45,6 +45,8 @@ struct GstOmxBaseFilter
 
     GstPad *sinkpad;
     GstPad *srcpad;
+    GOmxPadData sinkpad_data;
+    GOmxPadData srcpad_data;
 
     GOmxCore *gomx;
     GOmxPort *in_port;

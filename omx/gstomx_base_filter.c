@@ -155,8 +155,23 @@ change_state (GstElement *element,
             break;
 
         case GST_STATE_CHANGE_READY_TO_PAUSED:
-            gst_pad_start_task (self->srcpad, output_loop, self->srcpad);
+
+            enable_tunneled_ports(self);
+            omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateExecuting, NULL);
+            g_omx_sem_down (gomx->state_sem);
+
+            if (omx_error)
+            {
+                return GST_STATE_CHANGE_FAILURE;
+            }
+
+            if( (!out_port->tunneled) && (out_port->linked) )
+            {
+                gst_pad_start_task (self->srcpad, output_loop, self->srcpad);
+            }
+
             g_omx_core_start (self->gomx);
+
             break;
 
         default:
@@ -179,6 +194,15 @@ change_state (GstElement *element,
             break;
 
         case GST_STATE_CHANGE_READY_TO_NULL:
+            disable_tunneled_ports(self);
+            omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateLoaded, NULL);
+            g_omx_core_finish (gomx);
+
+            g_omx_sem_down (gomx->state_sem);
+            if (omx_error)
+            {
+                return GST_STATE_CHANGE_FAILURE;
+            }
             g_omx_core_deinit (self->gomx);
             if (self->gomx->omx_error)
                 return GST_STATE_CHANGE_FAILURE;
@@ -593,6 +617,191 @@ find_real_peer (GstPad *pad,
     return real_peerpad;
 }
 
+
+static GstPadLinkReturn
+pad_link  (GstPad *pad,
+           GstPad *peer,
+           GOmxPortType port_type)
+{
+    bool isOMX = FALSE;
+    GOmxCore *gomx;
+    GOmxPort *port;
+    GstOmxBaseFilter *self;
+    GObject *gpeerobject;
+    GstElement* gpeerelement;
+    GstElement* gthiselement;
+    GstPad *peerpad;
+    GstGhostPad *ghostpad;
+
+    self = GST_OMX_BASE_FILTER (GST_OBJECT_PARENT (pad));
+    if(!self->initialized )
+    {
+        return GST_PAD_LINK_REFUSED;
+    }
+
+    gomx = self->gomx;
+    if(port_type == GOMX_PORT_OUTPUT )
+    {
+        port = self->out_port;
+    }
+    else
+    {
+        port = self->in_port;
+    }
+    if(port->tunneled)
+    {
+        return GST_PAD_LINK_OK;//nothing to do , tunnel already linked 
+    }
+    peerpad = find_real_peer(pad,peer);
+    if(peerpad == NULL)
+    {
+        return GST_PAD_LINK_OK;
+    }
+
+    gpeerelement = gst_pad_get_parent_element(peerpad);
+
+    port->linked = TRUE;
+
+    gpeerobject = G_OBJECT (gpeerelement);
+    GObjectClass *g_object_class = G_OBJECT_GET_CLASS(gpeerobject);
+
+    GParamSpec *spec;
+    spec = g_object_class_find_property(g_object_class, "Allow-omx-tunnel");
+    if(spec != NULL)
+    {
+        if(spec->value_type == G_TYPE_BOOLEAN)
+        {
+            GValue tunnelAllowed = { 0, };
+            g_value_init (&tunnelAllowed, G_TYPE_BOOLEAN);
+            g_object_get_property (G_OBJECT (gpeerelement), "Allow-omx-tunnel", &tunnelAllowed);
+
+            spec = g_object_class_find_property(g_object_class, "GOMX-Core-Pointer");
+
+            if( (spec != NULL) && (g_value_get_boolean (&tunnelAllowed) == TRUE) && (self->allow_omx_tunnel == TRUE) )
+            {
+                if(spec->value_type == G_TYPE_POINTER)
+                {
+                    GValue value = { 0, };
+                    GOmxCore *gpeeromx;
+                    GOmxPadData *paddata;
+                    g_value_init (&value, G_TYPE_POINTER);
+                    OMX_ERRORTYPE retval;
+                    g_object_get_property (G_OBJECT (gpeerelement), "GOMX-Core-Pointer", &value);
+
+                    gpeeromx = g_value_get_pointer (&value);
+
+                    //port might already be prepared for non-tunneled communication
+                    g_omx_core_release_buffer(gomx,port);
+
+                    retval = OMX_SendCommand( gomx->omx_handle, OMX_CommandPortDisable, port->port_index, NULL);
+                    if(retval != OMX_ErrorNone)
+                    {
+                        gst_object_unref(gpeerelement);
+                        gst_object_unref(peerpad);
+                        return GST_PAD_LINK_REFUSED; 
+                    }
+                    port->enabled = FALSE;
+                    g_omx_sem_down (gomx->port_state_sem);
+
+                    if(port_type == GOMX_PORT_OUTPUT )
+                    {
+                        (self->srcpad_data).setting_tunnel = TRUE;
+                    }
+                    else
+                    {
+                        (self->sinkpad_data).setting_tunnel = TRUE;
+                    }
+
+                    //check if the other OMX component invoked us, or if we need to invoke him
+                    paddata = (GOmxPadData*)gst_pad_get_element_private (peerpad);
+                    if(paddata->setting_tunnel == TRUE)
+                    {
+                        if(!(port->tunneled))
+                        {
+                            if(port_type == GOMX_PORT_OUTPUT )
+                            {
+                                g_omx_core_setup_tunnel(gomx,gpeeromx);
+                            }
+                            else
+                            {
+                                g_omx_core_setup_tunnel(gpeeromx, gomx);
+                            }
+                        }
+                    }
+                    else if(peer->linkfunc != NULL)
+                    {
+                        peerpad->linkfunc(peerpad,pad);
+                    }
+                    if(port_type == GOMX_PORT_OUTPUT )
+                    {
+                        (self->srcpad_data).setting_tunnel = FALSE;
+                    }
+                    else
+                    {
+                        (self->sinkpad_data).setting_tunnel = FALSE;
+                    }
+                    if(gomx->omx_state == OMX_StateExecuting)
+                    {
+                        enable_tunneled_ports(self);
+                    }
+                }
+            }
+        }
+    }
+    else if(( gomx->omx_state == OMX_StateExecuting) && (self->thread == NULL) && (port_type == GOMX_PORT_OUTPUT ) )
+    {
+        self->thread = g_thread_create (output_thread, gomx, TRUE, NULL);
+    }
+    gst_object_unref(gpeerelement);
+    gst_object_unref(peerpad);
+
+    return GST_PAD_LINK_OK;
+}
+
+static GstPadLinkReturn
+pad_source_link  (GstPad *pad,
+                          GstPad *peer
+                         )
+{
+    return pad_link  (pad,peer,GOMX_PORT_OUTPUT);
+}
+
+static GstPadLinkReturn
+pad_sink_link  (GstPad *pad,
+                        GstPad *peer
+                       )
+{
+    return pad_link  (pad,peer,GOMX_PORT_INPUT);
+}
+
+static void
+pad_unlink  (GstPad *pad)
+{
+    GstOmxBaseFilter *self;
+    GOmxPort *in_port;
+    GOmxPort *out_port;
+
+    self = GST_OMX_BASE_FILTER (GST_OBJECT_PARENT (pad));
+
+    in_port = self->in_port;
+    out_port = self->out_port;
+
+    if(!self->initialized )
+    {
+        return;
+    }
+    if(pad == self->sinkpad)
+    {
+        in_port->tunneled = FALSE;
+        in_port->linked = FALSE;
+    }
+    else if(pad == self->srcpad)
+    {
+        out_port->tunneled = FALSE;
+        out_port->linked = FALSE;
+    }
+}
+
 static GstFlowReturn
 pad_chain (GstPad *pad,
            GstBuffer *buf)
@@ -612,6 +821,11 @@ pad_chain (GstPad *pad,
     GST_LOG_OBJECT (self, "state: %d", gomx->omx_state);
 
     in_port = self->in_port;
+
+    if (G_UNLIKELY(in_port->tunneled))
+    {
+        return GST_FLOW_OK;
+    }
 
     if (G_LIKELY (in_port->enabled))
     {
@@ -969,6 +1183,7 @@ type_instance_init (GTypeInstance *instance,
     GST_LOG_OBJECT (self, "begin");
 
     self->use_timestamps = TRUE;
+    self->allow_omx_tunnel = TRUE;
 
     /* GOmx */
     {
@@ -982,12 +1197,22 @@ type_instance_init (GTypeInstance *instance,
 
     gst_pad_set_chain_function (self->sinkpad, pad_chain);
     gst_pad_set_event_function (self->sinkpad, pad_event);
+    //note that when linking against ghost-pads, the link function of the ghost pad should call this link function when the ghost pad gets linked to another ghost- or proxypad.
+    gst_pad_set_link_function (self->sinkpad, pad_sink_link);
+    gst_pad_set_unlink_function (self->sinkpad, pad_unlink);
+    gst_pad_set_element_private (self->sinkpad, &(self->sinkpad_data));
 
     self->srcpad =
         gst_pad_new_from_template (gst_element_class_get_pad_template (element_class, "src"), "src");
+    (self->srcpad_data).setting_tunnel = FALSE;
 
     gst_pad_set_activatepush_function (self->srcpad, activate_push);
 
+    //note that when linking against ghost-pads, the link function of the ghost pad should call this link function when the ghost pad gets linked to another ghost- or proxypad.
+    gst_pad_set_link_function (self->srcpad, pad_source_link);
+    gst_pad_set_event_function (self->srcpad, pad_event);
+    gst_pad_set_unlink_function (self->srcpad, pad_unlink);
+    gst_pad_set_element_private (self->srcpad, &(self->srcpad_data));
     gst_pad_use_fixed_caps (self->srcpad);
 
     gst_element_add_pad (GST_ELEMENT (self), self->sinkpad);
