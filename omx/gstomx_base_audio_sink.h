@@ -66,6 +66,8 @@ struct GstOmxBaseAudioSinkClass
     GstElementClass parent_class;
 };
 
+void gst_omx_base_audio_sink_omx_init (GstOmxBaseAudioSink *self);
+
 GType gst_omx_base_audio_sink_get_type (void);
 
 G_END_DECLS

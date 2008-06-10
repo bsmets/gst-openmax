@@ -157,7 +157,7 @@ type_instance_init (GTypeInstance *instance,
 
     omx_base->omx_component = g_strdup (OMX_COMPONENT_NAME);
 
-    gst_omx_base_audio_sink_omx_init (instance);
+    gst_omx_base_audio_sink_omx_init (omx_base);
 }
 
 GType

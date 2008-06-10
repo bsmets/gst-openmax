@@ -91,7 +91,7 @@ change_state (GstElement *element,
         case GST_STATE_CHANGE_NULL_TO_READY:
             if (self->initialized == FALSE)
             {
-                gst_omx_base_audio_sink_omx_init ((GTypeInstance *)self);
+                gst_omx_base_audio_sink_omx_init (self);
             }
             omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateIdle, NULL);
             g_omx_core_prepare (self->gomx);
@@ -508,15 +508,12 @@ type_instance_init (GTypeInstance *instance,
 }
 
 void
-gst_omx_base_audio_sink_omx_init (GTypeInstance *instance)
+gst_omx_base_audio_sink_omx_init (GstOmxBaseAudioSink *self)
 {
-    GstOmxBaseAudioSink *self;
-
-    self = GST_OMX_BASE_AUDIO_SINK (instance);
+    GOmxCore *gomx;
 
     GST_LOG_OBJECT (self, "begin");
 
-    GOmxCore *gomx;
     gomx = self->gomx;
 
     g_omx_core_init (self->gomx, self->omx_library, self->omx_component);
@@ -532,6 +529,8 @@ gst_omx_base_audio_sink_omx_init (GTypeInstance *instance)
     setup_ports (self);
 
     self->initialized = TRUE;
+
+    GST_LOG_OBJECT (self, "end");
 }
 
 
