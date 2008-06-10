@@ -51,6 +51,7 @@ struct GstOmxBaseFilter
     char *omx_component;
     char *omx_library;
     gboolean use_timestamps; /** @todo remove; timestamps should always be used */
+    gboolean allow_omx_tunnel;
 
     GstOmxBaseFilterCb omx_setup;
     GstFlowReturn last_pad_push_return;
