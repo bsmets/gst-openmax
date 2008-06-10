@@ -65,6 +65,47 @@ setup_ports (GstOmxBaseAudioSink *self)
     free (param);
 }
 
+static void
+disable_tunneled_ports (GstOmxBaseAudioSink *self)
+{
+    GOmxCore *gomx;
+    gomx = self->gomx;
+    OMX_ERRORTYPE omx_error = OMX_ErrorNone;
+
+    GOmxPort *in_port = self->in_port;
+
+    if((in_port->tunneled) && (in_port->enabled))
+    {
+        omx_error = OMX_SendCommand( gomx->omx_handle, OMX_CommandFlush, in_port->port_index, NULL);    
+        g_omx_sem_down (gomx->port_state_sem);
+
+        omx_error = OMX_SendCommand( gomx->omx_handle, OMX_CommandPortDisable, in_port->port_index, NULL);
+
+        send_disable_event (self,self->sinkpad); 
+        in_port->enabled = FALSE;
+
+        g_omx_sem_down (gomx->port_state_sem);
+    }
+}
+
+static void
+enable_tunneled_ports (GstOmxBaseAudioSink *self)
+{
+    GOmxCore *gomx;
+    gomx = self->gomx;
+    OMX_ERRORTYPE omx_error = OMX_ErrorNone;
+    GOmxPort *in_port = self->in_port;
+
+    if((in_port->tunneled) && (!(in_port->enabled)))
+    {
+        omx_error = OMX_SendCommand( gomx->omx_handle, OMX_CommandPortEnable, in_port->port_index, NULL);
+
+        send_enable_event (self,self->sinkpad);
+        in_port->enabled = TRUE;
+
+        g_omx_sem_down (gomx->port_state_sem);
+    }
+}
 
 static GstStateChangeReturn
 change_state (GstElement *element,
@@ -321,6 +362,62 @@ type_class_init (gpointer g_class,
     }
 }
 
+static GstPad*
+find_peer_of_proxypad(GstPad *peer)
+{
+    GstPad* ghostpad;
+    GstPad* peerofghostpad;
+    GstPad* targetpad;
+
+    ghostpad = (GstPad*)gst_pad_get_parent(peer);  
+    peerofghostpad = gst_pad_get_peer (ghostpad);
+    gst_object_unref(ghostpad);
+
+    if(GST_IS_GHOST_PAD (peerofghostpad))
+    {
+        targetpad = gst_ghost_pad_get_target ((GstGhostPad *) peerofghostpad);
+        gst_object_unref(peerofghostpad);
+    }
+    else
+    {
+        targetpad = peerofghostpad; 
+    }
+    return targetpad; 
+}
+
+static GstPad* 
+find_real_peer (GstPad *pad,
+                GstPad *peer)
+{
+    GstPad* real_peerpad;
+    GstElement* gpeerelement;
+
+    gpeerelement = gst_pad_get_parent_element(peer);
+
+    if(GST_IS_GHOST_PAD (peer))
+    {
+        real_peerpad = gst_ghost_pad_get_target ((GstGhostPad *) peer);
+        if( (real_peerpad == NULL)||(real_peerpad == pad) )
+        {
+            return NULL;
+        }
+    }
+    else if(gpeerelement == NULL)
+    {
+        real_peerpad = find_peer_of_proxypad(peer);
+        if(real_peerpad == NULL)
+        {
+            return NULL;
+        }
+    }
+    else
+    {
+        real_peerpad = peer;
+        gst_object_ref(real_peerpad);
+    }
+    return real_peerpad;
+}
+
 static GstFlowReturn
 pad_chain (GstPad *pad,
            GstBuffer *buf)
@@ -428,6 +525,55 @@ leave:
     return ret;
 }
 
+static gboolean
+send_disable_event (GstOmxBaseAudioSink *self,GstPad *pad)
+{
+    gboolean ret;
+    GstStructure *structure;
+    GstEvent *event;
+    GstPad *peerpad;
+
+    if(pad == self->sinkpad)
+    {
+        structure = gst_structure_empty_new  ("DisableOutPort");
+        event = gst_event_new_custom (GST_EVENT_CUSTOM_UPSTREAM, structure);
+    }
+    else
+    {
+        return FALSE;
+    }
+    peerpad = find_real_peer (pad, pad->peer);
+    if(peerpad != NULL)
+    {
+      //event are not handled by peer when it is in READY state, so we call its eventhandler directly
+      //ret = gst_pad_push_event (peerpad, event);
+        peerpad->eventfunc(peerpad,event );
+        gst_object_unref(peerpad);
+    }
+    return ret;
+}
+
+static gboolean
+send_enable_event (GstOmxBaseAudioSink *self,GstPad *pad)
+{
+    gboolean ret;
+    GstStructure *structure;
+    GstEvent *event;
+    GstPad *peerpad;
+
+    if(pad == self->sinkpad)
+    {
+        structure = gst_structure_empty_new  ("EnableOutPort");
+        event = gst_event_new_custom (GST_EVENT_CUSTOM_UPSTREAM, structure);
+    }
+    else
+    {
+        return FALSE;
+    }
+
+    ret = gst_pad_push_event (pad, event);
+    return ret;
+}
 
 static gboolean
 pad_event (GstPad *pad,
@@ -457,6 +603,16 @@ pad_event (GstPad *pad,
         case GST_EVENT_FLUSH_START:
             OMX_SendCommand (self->gomx->omx_handle, OMX_CommandFlush, 0, NULL);
             g_omx_sem_down (gomx->port_state_sem);
+            break;
+
+        case GST_EVENT_CUSTOM_BOTH_OOB:
+        case GST_EVENT_CUSTOM_DOWNSTREAM_OOB:
+            if (strcmp(gst_structure_get_name (event->structure),"DisableInPort") == 0)
+            {
+                OMX_SendCommand( gomx->omx_handle, OMX_CommandPortDisable, in_port->port_index, NULL);
+                in_port->enabled = FALSE;
+                g_omx_sem_down (gomx->port_state_sem);
+            }
             break;
 
         default:
