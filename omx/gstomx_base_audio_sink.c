@@ -624,6 +624,35 @@ pad_event (GstPad *pad,
 }
 
 static void
+event_handler_cb (GOmxCore *core,
+                  OMX_EVENTTYPE eEvent,
+                  OMX_U32 nData1,
+                  OMX_U32 nData2,
+                  OMX_PTR pEventData)
+{
+    GstOmxBaseAudioSink *self;
+    self = GST_OMX_BASE_AUDIO_SINK (core->client_data);
+    GOmxPort *in_port = self->in_port;
+
+    switch (eEvent)
+    {
+        case OMX_EventBufferFlag:
+            if(in_port != NULL)
+            {
+                if ( (nData2 & OMX_BUFFERFLAG_EOS) && (in_port->tunneled) )
+                {
+                    GstMessage *EOSmessage;
+                    EOSmessage = gst_message_new_eos (GST_OBJECT(self));
+                    gst_element_post_message (GST_ELEMENT(self),EOSmessage);
+                }
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+static void
 type_instance_init (GTypeInstance *instance,
                     gpointer g_class)
 {
@@ -644,6 +673,7 @@ type_instance_init (GTypeInstance *instance,
         GOmxCore *gomx;
         self->gomx = gomx = g_omx_core_new ();
         gomx->client_data = self;
+        gomx->event_handler_cb = event_handler_cb;
     }
 
     self->sinkpad =
