@@ -267,6 +267,8 @@ g_omx_core_deinit (GOmxCore *core)
 void
 g_omx_core_prepare (GOmxCore *core)
 {
+    change_state (core, OMX_StateIdle);
+
     /* Allocate buffers. */
     {
         guint index;
@@ -304,6 +306,8 @@ g_omx_core_prepare (GOmxCore *core)
             }
         }
     }
+
+    wait_for_state (core, OMX_StateIdle);
 }
 
 void
@@ -379,6 +383,10 @@ g_omx_core_setup_tunnel (GOmxCore *core_out,
 void
 g_omx_core_start (GOmxCore *core)
 {
+    change_state (core, OMX_StateExecuting);
+
+    wait_for_state (core, OMX_StateExecuting);
+
     {
         guint index;
         guint i;
@@ -415,6 +423,12 @@ g_omx_core_pause (GOmxCore *core)
 void
 g_omx_core_finish (GOmxCore *core)
 {
+    change_state (core, OMX_StateIdle);
+
+    wait_for_state (core, OMX_StateIdle);
+
+    change_state (core, OMX_StateLoaded);
+
     {
         guint index;
         guint i;
@@ -442,6 +456,8 @@ g_omx_core_finish (GOmxCore *core)
             }
         }
     }
+
+    wait_for_state (core, OMX_StateLoaded);
 
     {
         guint index;
