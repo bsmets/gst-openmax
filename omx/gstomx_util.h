@@ -1,11 +1,10 @@
 /*
  * Copyright (C) 2006-2007 Texas Instruments, Incorporated
  * Copyright (C) 2007-2008 Nokia Corporation.
- * Copyright (C) 2008 NXP. All rights reserved.
+ * Copyright (C) 2008 NXP.
  *
  * Author: Felipe Contreras <felipe.contreras@nokia.com>
- * Contributors:
- * Frederik Vernelen <frederik.vernelen@nxp.com>
+ * Author: Frederik Vernelen <frederik.vernelen@nxp.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -70,10 +69,10 @@ struct GOmxSymbolTable
                                  OMX_PTR data,
                                  OMX_CALLBACKTYPE *callbacks);
     OMX_ERRORTYPE (*free_handle) (OMX_HANDLETYPE handle);
-    OMX_ERRORTYPE (*setup_tunnel)  (OMX_HANDLETYPE hOutput,
-                                    OMX_U32 nPortOutput,
-                                    OMX_HANDLETYPE hInput,
-                                    OMX_U32 nPortInput);
+    OMX_ERRORTYPE (*setup_tunnel) (OMX_HANDLETYPE hOutput,
+                                   OMX_U32 nPortOutput,
+                                   OMX_HANDLETYPE hInput,
+                                   OMX_U32 nPortInput);
 };
 
 struct GOmxImp
@@ -112,6 +111,8 @@ struct GOmxPort
 
     guint num_buffers;
     gulong buffer_size;
+    guint port_index;
+
     OMX_BUFFERHEADERTYPE **buffers;
 
     GMutex *mutex;

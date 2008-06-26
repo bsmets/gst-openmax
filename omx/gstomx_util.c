@@ -1,11 +1,10 @@
 /*
  * Copyright (C) 2006-2007 Texas Instruments, Incorporated
  * Copyright (C) 2007-2008 Nokia Corporation.
- * Copyright (C) 2008 NXP. All rights reserved.
+ * Copyright (C) 2008 NXP.
  *
  * Author: Felipe Contreras <felipe.contreras@nokia.com>
- * Contributors:
- * Frederik vernelen <frederik.vernelen@nxp.com>
+ * Author: Frederik vernelen <frederik.vernelen@nxp.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -226,7 +225,7 @@ g_omx_core_free (GOmxCore *core)
     g_omx_sem_free (core->flush_sem);
     g_omx_sem_free (core->done_sem);
     g_omx_sem_free (core->state_sem);
-    g_omx_sem_free (core->port_state_sem);    
+    g_omx_sem_free (core->port_state_sem);
 
     g_ptr_array_free (core->ports, TRUE);
 
@@ -337,7 +336,6 @@ g_omx_core_setup_tunnel (GOmxCore *core_out,
     GOmxPort *in_port = NULL;
     GOmxPort *out_port = NULL;
     gint index;
-    gint i;
 
     /* get in port */
     for (index = 0; index < core_in->ports->len; index++)
@@ -779,13 +777,13 @@ EventHandler (OMX_HANDLETYPE omx_handle,
                         break;
                     case OMX_CommandFlush:
                         g_omx_sem_up (core->flush_sem);
-                        g_omx_sem_up (core->port_state_sem); 
+                        g_omx_sem_up (core->port_state_sem);
                         break;
                     case OMX_CommandPortDisable:
-                        g_omx_sem_up (core->port_state_sem); 
+                        g_omx_sem_up (core->port_state_sem);
                         break;
                     case OMX_CommandPortEnable:
-                        g_omx_sem_up (core->port_state_sem); 
+                        g_omx_sem_up (core->port_state_sem);
                         break;
                     default:
                         break;
