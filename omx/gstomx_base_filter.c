@@ -170,10 +170,8 @@ set_property (GObject *obj,
               GParamSpec *pspec)
 {
     GstOmxBaseFilter *self;
-    GOmxCore *gomx;
 
     self = GST_OMX_BASE_FILTER (obj);
-    gomx = self->gomx;
 
     switch (prop_id)
     {
@@ -197,9 +195,6 @@ set_property (GObject *obj,
         case ARG_TUNNELING:
             self->allow_omx_tunnel = g_value_get_boolean (value);
             break;
-        case ARG_GOMX_CORE:
-            gomx = g_value_get_pointer (value);
-            break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, prop_id, pspec);
             break;
@@ -213,10 +208,8 @@ get_property (GObject *obj,
               GParamSpec *pspec)
 {
     GstOmxBaseFilter *self;
-    GOmxCore *gomx;
 
     self = GST_OMX_BASE_FILTER (obj);
-    gomx = self->gomx;
 
     switch (prop_id)
     {
@@ -233,7 +226,7 @@ get_property (GObject *obj,
             g_value_set_boolean (value, self->allow_omx_tunnel);
             break;
         case ARG_GOMX_CORE:
-            g_value_set_pointer (value, gomx);
+            g_value_set_pointer (value, self->gomx);
             break;
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, prop_id, pspec);
@@ -284,7 +277,7 @@ type_class_init (gpointer g_class,
         g_object_class_install_property (gobject_class, ARG_GOMX_CORE,
                                          g_param_spec_pointer ("core-pointer", "GOmx Core Pointer",
                                                                "Pointer used for tunneling",
-                                                               G_PARAM_READWRITE));
+                                                               G_PARAM_READABLE));
     }
 }
 
