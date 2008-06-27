@@ -35,7 +35,7 @@ enum
     ARG_COMPONENT_NAME,
     ARG_LIBRARY_NAME,
     ARG_USE_TIMESTAMPS,
-    ARG_ALLOW_OMX_TUNNEL,
+    ARG_TUNNELING,
     ARG_GOMX_CORE
 };
 
@@ -194,7 +194,7 @@ set_property (GObject *obj,
         case ARG_USE_TIMESTAMPS:
             self->use_timestamps = g_value_get_boolean (value);
             break;
-        case ARG_ALLOW_OMX_TUNNEL:
+        case ARG_TUNNELING:
             self->allow_omx_tunnel = g_value_get_boolean (value);
             break;
         case ARG_GOMX_CORE:
@@ -229,7 +229,7 @@ get_property (GObject *obj,
         case ARG_USE_TIMESTAMPS:
             g_value_set_boolean (value, self->use_timestamps);
             break;
-        case ARG_ALLOW_OMX_TUNNEL:
+        case ARG_TUNNELING:
             g_value_set_boolean (value, self->allow_omx_tunnel);
             break;
         case ARG_GOMX_CORE:
@@ -276,16 +276,15 @@ type_class_init (gpointer g_class,
                                                                "Whether or not to use timestamps",
                                                                TRUE, G_PARAM_READWRITE));
 
-        g_object_class_install_property (gobject_class, ARG_ALLOW_OMX_TUNNEL,
-                                         g_param_spec_boolean ("Allow-omx-tunnel", "Allow OMX Tunnel",
-                                                 "Allow setting up an omx tunnel between this component and another component",
-                                                         TRUE,
-                                                                 G_PARAM_READWRITE));
+        g_object_class_install_property (gobject_class, ARG_TUNNELING,
+                                         g_param_spec_boolean ("tunneling", "Allow tunneling",
+                                                               "Allow setting up an openmax tunnel with another element",
+                                                               TRUE, G_PARAM_READWRITE));
 
         g_object_class_install_property (gobject_class, ARG_GOMX_CORE,
-                                         g_param_spec_pointer ("GOMX-Core-Pointer", "GOMX Core Pointer",
-                                                 "Pointer to the GOMX struct of this gstomx element",
-                                                         G_PARAM_READWRITE));
+                                         g_param_spec_pointer ("core-pointer", "GOmx Core Pointer",
+                                                               "Pointer used for tunneling",
+                                                               G_PARAM_READWRITE));
     }
 }
 
