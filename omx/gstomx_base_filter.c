@@ -113,12 +113,27 @@ disable_tunneled_port (GstOmxBaseFilter *self,
     }
 }
 
+static void
+disable_tunneled_ports (GstOmxBaseFilter *self)
+{
+    disable_tunneled_port (self,self->in_port,self->sinkpad);
+    disable_tunneled_port (self,self->out_port,self->srcpad);
+}
+
+static void
+enable_tunneled_ports (GstOmxBaseFilter *self)
+{
+    enable_tunneled_port (self,self->in_port,self->sinkpad);
+    enable_tunneled_port (self,self->out_port,self->srcpad);
+}
+
 static GstStateChangeReturn
 change_state (GstElement *element,
               GstStateChange transition)
 {
     GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
     GstOmxBaseFilter *self;
+    OMX_ERRORTYPE omx_error = OMX_ErrorNone;
 
     self = GST_OMX_BASE_FILTER (element);
 
@@ -157,15 +172,15 @@ change_state (GstElement *element,
         case GST_STATE_CHANGE_READY_TO_PAUSED:
 
             enable_tunneled_ports(self);
-            omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateExecuting, NULL);
-            g_omx_sem_down (gomx->state_sem);
+            omx_error = OMX_SendCommand (self->gomx->omx_handle, OMX_CommandStateSet, OMX_StateExecuting, NULL);
+            g_omx_sem_down (self->gomx->state_sem);
 
             if (omx_error)
             {
                 return GST_STATE_CHANGE_FAILURE;
             }
 
-            if( (!out_port->tunneled) && (out_port->linked) )
+            if( (!self->out_port->tunneled) && (self->out_port->linked) )
             {
                 gst_pad_start_task (self->srcpad, output_loop, self->srcpad);
             }
@@ -195,10 +210,10 @@ change_state (GstElement *element,
 
         case GST_STATE_CHANGE_READY_TO_NULL:
             disable_tunneled_ports(self);
-            omx_error = OMX_SendCommand (gomx->omx_handle, OMX_CommandStateSet, OMX_StateLoaded, NULL);
-            g_omx_core_finish (gomx);
+            omx_error = OMX_SendCommand (self->gomx->omx_handle, OMX_CommandStateSet, OMX_StateLoaded, NULL);
+            g_omx_core_finish (self->gomx);
 
-            g_omx_sem_down (gomx->state_sem);
+            g_omx_sem_down (self->gomx->state_sem);
             if (omx_error)
             {
                 return GST_STATE_CHANGE_FAILURE;
@@ -623,21 +638,17 @@ pad_link  (GstPad *pad,
            GstPad *peer,
            GOmxPortType port_type)
 {
-    bool isOMX = FALSE;
+    /* bool isOMX = FALSE; */
     GOmxCore *gomx;
     GOmxPort *port;
     GstOmxBaseFilter *self;
     GObject *gpeerobject;
     GstElement* gpeerelement;
-    GstElement* gthiselement;
+    /* GstElement* gthiselement; */
     GstPad *peerpad;
-    GstGhostPad *ghostpad;
+    /* GstGhostPad *ghostpad; */
 
     self = GST_OMX_BASE_FILTER (GST_OBJECT_PARENT (pad));
-    if(!self->initialized )
-    {
-        return GST_PAD_LINK_REFUSED;
-    }
 
     gomx = self->gomx;
     if(port_type == GOMX_PORT_OUTPUT )
@@ -748,10 +759,7 @@ pad_link  (GstPad *pad,
             }
         }
     }
-    else if(( gomx->omx_state == OMX_StateExecuting) && (self->thread == NULL) && (port_type == GOMX_PORT_OUTPUT ) )
-    {
-        self->thread = g_thread_create (output_thread, gomx, TRUE, NULL);
-    }
+
     gst_object_unref(gpeerelement);
     gst_object_unref(peerpad);
 
@@ -786,10 +794,6 @@ pad_unlink  (GstPad *pad)
     in_port = self->in_port;
     out_port = self->out_port;
 
-    if(!self->initialized )
-    {
-        return;
-    }
     if(pad == self->sinkpad)
     {
         in_port->tunneled = FALSE;
