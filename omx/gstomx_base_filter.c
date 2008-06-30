@@ -617,33 +617,40 @@ pad_link  (GstPad *pad,
            GstPad *peer,
            GOmxPortType port_type)
 {
-    GOmxCore *gomx;
-    GOmxPort *port;
     GstOmxBaseFilter *self;
-    GObject *gpeerobject;
-    GstElement* gpeerelement;
-    GstPad *peerpad;
+    GOmxCore *gomx;
 
     self = GST_OMX_BASE_FILTER (GST_OBJECT_PARENT (pad));
 
     gomx = self->gomx;
+
+    GOmxPort *port;
 
     if (port_type == GOMX_PORT_OUTPUT)
         port = self->out_port;
     else
         port = self->in_port;
 
+#if 0
     if (port->tunneled)
         return GST_PAD_LINK_OK; /* nothing to do, tunnel already linked */
+#endif
+
+#if 0
+    GstPad *peerpad;
 
     peerpad = find_real_peer (pad, peer);
     if (!peerpad)
         return GST_PAD_LINK_OK;
 
-    gpeerelement = gst_pad_get_parent_element (peerpad);
-
     port->linked = TRUE;
+#endif
 
+#if 0
+    GObject *gpeerobject;
+    GstElement* gpeerelement;
+
+    gpeerelement = gst_pad_get_parent_element (peerpad);
     gpeerobject = G_OBJECT (gpeerelement);
     GObjectClass *g_object_class = G_OBJECT_GET_CLASS (gpeerobject);
 
@@ -725,6 +732,7 @@ pad_link  (GstPad *pad,
 
     gst_object_unref (gpeerelement);
     gst_object_unref (peerpad);
+#endif
 
     return GST_PAD_LINK_OK;
 }
